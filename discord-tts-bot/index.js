@@ -2,91 +2,87 @@ require('dotenv').config();
 const express = require('express');
 const { Client, GatewayIntentBits } = require('discord.js');
 const {
-  joinVoiceChannel, createAudioPlayer, createAudioResource,
-  getVoiceConnection
+  joinVoiceChannel,
+  getVoiceConnection,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus
 } = require('@discordjs/voice');
 const googleTTS = require('google-tts-api');
 const axios = require('axios');
 const fs = require('fs');
-
 const app = express();
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
-const player = createAudioPlayer();
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-const GUILD_ID = process.env.GUILD_ID;
-const CHANNEL_ID = process.env.CHANNEL_ID;
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-
-// 🔄 ユーザー入退室でBotも自動入退出
-client.on('voiceStateUpdate', async (oldState, newState) => {
-  const user = newState.member?.user || oldState.member?.user;
-  if (!user || user.bot) return;
-  const guildId = newState.guild.id;
-  const joinedChannel = newState.channel;
-  const leftChannel = oldState.channel;
-
-  if (!leftChannel && joinedChannel) {
-    if (!getVoiceConnection(guildId)) {
-      joinVoiceChannel({
-        channelId: joinedChannel.id,
-        guildId,
-        adapterCreator: joinedChannel.guild.voiceAdapterCreator,
-      });
-      console.log("[VC] Botが参加しました");
-    }
-  }
-
-  if (leftChannel) {
-    const remaining = leftChannel.members.filter(m => !m.user.bot);
-    if (remaining.size === 0) {
-      const conn = getVoiceConnection(guildId);
-      if (conn) conn.destroy();
-      console.log("[VC] 無人のためBotが退出しました");
-    }
-  }
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates
+  ]
 });
 
-// 🗣️ Webhook受信 → テキストチャンネルに送信
-app.post('/send-text', async (req, res) => {
+const player = createAudioPlayer();
+
+// Bot起動
+client.once('ready', () => {
+  console.log(`🤖 Bot起動完了: ${client.user.tag}`);
+});
+
+// 誰かがメッセージを打ったら読み上げ
+client.on('messageCreate', async message => {
+  if (message.author.bot || message.channel.id !== process.env.CHANNEL_ID) return;
+
+  await speak(message.content, message);
+});
+
+// WebからPOSTされたテキストも読み上げ
+app.post('/speak', async (req, res) => {
   const text = req.body.text;
-  const channel = await client.channels.fetch(CHANNEL_ID);
-  if (channel.isTextBased()) await channel.send(`🗣️ ${text}`);
-  res.sendStatus(200);
+  const userId = req.body.userId || 'web';
+
+  if (!text) return res.status(400).send('❌ textが空です');
+
+  const guild = client.guilds.cache.get(process.env.GUILD_ID);
+  if (!guild) return res.status(404).send('❌ GUILDが見つかりません');
+
+  const member = [...guild.members.cache.values()].find(m => !m.user.bot && m.voice.channel);
+  if (!member) return res.status(404).send('❌ VCに誰もいません');
+
+  await speak(text, { member });
+  res.send(`🔊 読み上げ: ${text}`);
 });
 
-// 💬 テキスト投稿 → VCで読み上げ
-client.on('messageCreate', async (message) => {
-  if (message.author.bot || message.channel.id !== CHANNEL_ID) return;
-  const text = message.content;
+// 読み上げ処理共通関数
+async function speak(text, context) {
   const url = googleTTS.getAudioUrl(text, { lang: 'ja', slow: false });
-
   const response = await axios.get(url, { responseType: 'stream' });
   const filePath = `tts-${Date.now()}.mp3`;
   const writer = fs.createWriteStream(filePath);
+
   response.data.pipe(writer);
   writer.on('finish', () => {
+    const connection = getVoiceConnection(process.env.GUILD_ID) ||
+      joinVoiceChannel({
+        channelId: context.member.voice.channelId,
+        guildId: process.env.GUILD_ID,
+        adapterCreator: context.member.guild.voiceAdapterCreator,
+      });
+
     const resource = createAudioResource(filePath);
-    const conn = getVoiceConnection(GUILD_ID);
-    if (conn) {
-      conn.subscribe(player);
-      player.play(resource);
-      player.on('idle', () => fs.unlinkSync(filePath));
-    }
+    connection.subscribe(player);
+    player.play(resource);
+
+    player.once(AudioPlayerStatus.Idle, () => {
+      fs.unlinkSync(filePath);
+    });
   });
-});
+}
 
-client.once('ready', () => {
-  console.log(`🤖 Bot Ready: ${client.user.tag}`);
-  app.listen(3000, () => console.log('🌐 Webhook待機中 http://localhost:3000'));
-});
+client.login(process.env.DISCORD_TOKEN);
 
-client.login(DISCORD_TOKEN);
+app.get('/', (req, res) => res.send('🌐 Bot is alive'));
+app.listen(PORT, () => console.log(`🌐 Webサーバー起動: http://localhost
