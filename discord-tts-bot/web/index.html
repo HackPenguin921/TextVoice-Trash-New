@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>音声認識</title></head>
+<body>
+  <h2>🎙️ 喋って→テキストチャンネルに送信</h2>
+  <button id="start">音声認識スタート</button>
+  <script>
+    const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+    recognition.lang = 'ja-JP';
+    recognition.continuous = false;
+
+    document.getElementById('start').onclick = () => recognition.start();
+
+    recognition.onresult = (e) => {
+      const text = e.results[0][0].transcript;
+      fetch('https://あなたのサーバー/send-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+    };
+  </script>
+</body>
+</html>

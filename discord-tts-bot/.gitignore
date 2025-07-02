@@ -1,0 +1,7 @@
+# 音声ファイルの一時保存を除外
+*.mp3
+*.wav
+
+# node_modules は必ず除外
+node_modules/
+.env
