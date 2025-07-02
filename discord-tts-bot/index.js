@@ -85,4 +85,4 @@ async function speak(text, context) {
 client.login(process.env.DISCORD_TOKEN);
 
 app.get('/', (req, res) => res.send('🌐 Bot is alive'));
-app.listen(PORT, () => console.log(`🌐 Webサーバー起動: http://localhost
+app.listen(PORT, () => console.log(`🌐 Webサーバー起動: http://localhost:${PORT}`));
